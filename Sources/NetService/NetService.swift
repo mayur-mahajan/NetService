@@ -8,7 +8,7 @@ import Foundation
 import Cifaddrs
 import DNS
 import Socket
-
+import NIO
 
 let duplicateNameCheckTimeInterval = TimeInterval(3)
 
@@ -110,8 +110,8 @@ public class NetService: Listener {
     /// An array containing `Socket.Address` objects, each of which contains a socket address for the service. <s>Each `Socket.Address` object in the returned array contains an appropriate sockaddr structure that you can use to connect to the socket. The exact type of this structure depends on the service to which you are connecting.</s> If no addresses were resolved for the service, the returned array contains zero elements.
     ///
     /// It is possible for a single service to resolve to more than one address or not resolve to any addresses. A service might resolve to multiple addresses if the computer publishing the service is currently multihoming.
-    public internal(set) var addresses: [Socket.Address]?
-
+    public internal(set) var addresses: [SocketAddress]?
+    
     /// A string containing the domain for this service.
     ///
     /// This can be an explicit domain name or it can contain the generic local domain name, `"local."` (note the trailing period, which indicates an absolute name).
@@ -211,45 +211,45 @@ public class NetService: Listener {
             publishState = .lookingForDuplicates(1, timer)
         }
 
-        if options.contains(.listenForConnections) {
-            precondition(type.hasSuffix("._tcp."), "only listening on TCP is supported")
-
-            listenQueue = DispatchQueue.global(qos: .userInteractive)
-
-            do {
-                socket4 = try Socket.create(family: .inet, type: .stream, proto: .tcp)
-                try socket4!.listen(on: self.port)
-                self.port = Int(socket4!.signature!.port)
-
-                socket6 = try Socket.create(family: .inet6, type: .stream, proto: .tcp)
-                try socket6!.listen(on: self.port)
-            } catch {
-                publishError(error)
-            }
-
-            listenQueue!.async { [unowned self] in
-                while true {
-                    do {
-                        let responderSocket = try self.socket4!.acceptClientConnection()
-                        self.delegate?.netService(self, didAcceptConnectionWith: responderSocket)
-                    } catch {
-                        self.publishError(error)
-                        break
-                    }
-                }
-            }
-            listenQueue!.async { [unowned self] in
-                while true {
-                    do {
-                        let responderSocket = try self.socket6!.acceptClientConnection()
-                        self.delegate?.netService(self, didAcceptConnectionWith: responderSocket)
-                    } catch {
-                        self.publishError(error)
-                        break
-                    }
-                }
-            }
-        }
+//        if options.contains(.listenForConnections) {
+//            precondition(type.hasSuffix("._tcp."), "only listening on TCP is supported")
+//
+//            listenQueue = DispatchQueue.global(qos: .userInteractive)
+//
+//            do {
+//                socket4 = try Socket.create(family: .inet, type: .stream, proto: .tcp)
+//                try socket4!.listen(on: self.port)
+//                self.port = Int(socket4!.signature!.port)
+//
+//                socket6 = try Socket.create(family: .inet6, type: .stream, proto: .tcp)
+//                try socket6!.listen(on: self.port)
+//            } catch {
+//                publishError(error)
+//            }
+//
+//            listenQueue!.async { [unowned self] in
+//                while true {
+//                    do {
+//                        let responderSocket = try self.socket4!.acceptClientConnection()
+//                        self.delegate?.netService(self, didAcceptConnectionWith: responderSocket)
+//                    } catch {
+//                        self.publishError(error)
+//                        break
+//                    }
+//                }
+//            }
+//            listenQueue!.async { [unowned self] in
+//                while true {
+//                    do {
+//                        let responderSocket = try self.socket6!.acceptClientConnection()
+//                        self.delegate?.netService(self, didAcceptConnectionWith: responderSocket)
+//                    } catch {
+//                        self.publishError(error)
+//                        break
+//                    }
+//                }
+//            }
+//        }
 
         if options.contains(.noAutoRename) {
             publishPhaseTwo()
@@ -262,11 +262,9 @@ public class NetService: Listener {
         if let index = responder!.listeners.index(where: {$0 === self }) {
             responder!.listeners.remove(at: index)
         }
-        
-        addresses = responder!.addresses.map {
-            var address = $0
-            address.port = UInt16(self.port)
-            return address
+
+        addresses = responder!.addresses.filter {
+            UInt16(port) == $0.port
         }
         pointerRecord = PointerRecord(name: "\(type)\(domain)", ttl: 4500, destination: fqdn)
         serviceRecord = ServiceRecord(name: fqdn, ttl: 120, port: UInt16(port), server: hostName!)

@@ -3,7 +3,7 @@
 import Foundation
 import DNS
 import Socket
-
+import NIO
 // TODO: track TTL of records
 
 
@@ -122,7 +122,7 @@ public class NetServiceBrowser: Listener {
                     sin.sin_family = sa_family_t(AF_INET)
                     sin.sin_addr = hostRecord.ip.address
                     sin.sin_port = serviceRecord.port
-                    return Socket.Address.ipv4(sin)
+                    return SocketAddress(sin, host: "")
                 }
             service.addresses! += message.additional
                 .compactMap { $0 as? HostRecord<IPv6> }
@@ -132,7 +132,7 @@ public class NetServiceBrowser: Listener {
                     sin6.sin6_family = sa_family_t(AF_INET6)
                     sin6.sin6_addr = hostRecord.ip.address
                     sin6.sin6_port = serviceRecord.port
-                    return Socket.Address.ipv6(sin6)
+                    return SocketAddress(sin6, host: "")
                 }
 
             self.services.append(pointer.destination)

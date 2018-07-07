@@ -1,154 +1,23 @@
 import Foundation
 import DNS
 import Socket
-#if os(Linux)
-    import Dispatch
-#endif
+import NIO
 
-
-class Responder: UDPChannelDelegate {
-    enum Error: Swift.Error {
-        case channelSetupError(Swift.Error)
-        case missingResourceRecords
-    }
+final class MessageHandler: ChannelInboundHandler {
+    typealias InboundIn  = AddressedEnvelope<Message>
+    typealias OutboundOut  = AddressedEnvelope<Message>
     
-    let ipv4Group: Socket.Address = {
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_addr = IPv4("224.0.0.251")!.address
-        addr.sin_port = (5353 as in_port_t).bigEndian
-        return .ipv4(addr)
-    }()
-    
-    let ipv6Group: Socket.Address = {
-        var addr = sockaddr_in6()
-        addr.sin6_family = sa_family_t(AF_INET)
-        addr.sin6_addr = IPv6("FF02::FB")!.address
-        addr.sin6_port = (5353 as in_port_t).bigEndian
-        return .ipv6(addr)
-    }()
-    
-    private static var _shared: Responder?
-    internal static func shared() throws -> Responder {
-        if let shared = _shared {
-            return shared
-        }
-        _shared = try Responder()
-        return _shared!
-    }
-
-    internal var listeners = [Listener]()
-    let queue = DispatchQueue.global(qos: .userInteractive)
-    let channels: [UDPChannel]
-    public private(set) var publishedServices: [NetService] = []
-    
-    // TODO: update host records on IP address changes
-    let hostname: String
-    let addresses: [Socket.Address]
-    let hostRecords: [ResourceRecord]
-    let host6Records: [ResourceRecord]
-    
-    private init() throws {
-        do {
-            try channels = [
-                UDPChannel(group: ipv4Group, queue: queue),
-                // UDPChannel(group: ipv6Group, queue: queue),
-            ]
-        } catch {
-            throw Error.channelSetupError(error)
+    func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+        let incomingEnvelope = unwrapInboundIn(data)
+        let source = incomingEnvelope.remoteAddress
+        let message = incomingEnvelope.data
+        
+        guard let responder = try? Responder.shared() else {
+            NSLog("Failed to get shared responder instance")
+            return
         }
         
-        let hostname = try gethostname() + "."
-        precondition(hostname.hasSuffix(".local."), "host name \(hostname) should have suffix .local")
-        self.hostname = hostname
-
-        addresses = getLocalAddresses()
-
-        hostRecords = addresses.compactMap { (address) -> HostRecord<IPv4>? in
-            switch address {
-            case .ipv4(let sin):
-                return HostRecord<IPv4>(name: hostname, ttl: 120, ip: IPv4(address: sin.sin_addr))
-            default:
-                return nil
-            }
-        }
-        host6Records = addresses.compactMap { (address) -> HostRecord<IPv6>? in
-            switch address {
-            case .ipv6(let sin6):
-                return HostRecord<IPv6>(name: hostname, ttl: 120, ip: IPv6(address: sin6.sin6_addr))
-            default:
-                return nil
-            }
-        }
-        channels.forEach { $0.delegate = self }
-    }
-    
-    func channel(_ channel: UDPChannel, didReceive data: Data, from source: Socket.Address) {
-        let message: Message
-        do {
-            message = try Message(deserialize: data)
-        } catch {
-            return NSLog("Could not unpack message (hex encoded): \(data.hex).")
-        }
-        if message.type == .response {
-            for listener in self.listeners {
-                listener.received(message: message)
-            }
-            return
-        } else {
-            var answers = [ResourceRecord]()
-            var additional = [ResourceRecord]()
-            
-            for question in message.questions {
-                switch question.type {
-                case .pointer:
-                    for service in publishedServices {
-                        if let pointerRecord = service.pointerRecord,
-                            let serviceRecord = service.serviceRecord,
-                            pointerRecord.name == question.name
-                        {
-                            answers.append(pointerRecord)
-                            additional.append(serviceRecord)
-                            additional += hostRecords
-                            additional += host6Records
-                            if let textRecord = service.textRecord {
-                                additional.append(textRecord)
-                            }
-                        }
-                    }
-                case .service:
-                    for service in publishedServices {
-                        if let serviceRecord = service.serviceRecord, serviceRecord.name == question.name {
-                            answers.append(serviceRecord)
-                            additional += hostRecords
-                            additional += host6Records
-                        }
-                    }
-                case .host where question.name == hostname:
-                    answers += hostRecords
-                    additional += host6Records
-                case .host6 where question.name == hostname:
-                    answers += host6Records
-                    additional += hostRecords
-                case .text:
-                    for service in publishedServices {
-                        if let textRecord = service.textRecord, textRecord.name == question.name {
-                            answers.append(textRecord)
-                        }
-                    }
-                default:
-                    break
-                }
-            }
-            
-            guard answers.count > 0 else {
-                return
-            }
-            
-            var response = Message(type: .response)
-            response.questions = message.questions
-            response.answers = answers
-            response.additional = additional
+        if var response = responder.handleRequest(message: message) {
             // The destination UDP port in all Multicast DNS responses MUST be 5353,
             // and the destination address MUST be the mDNS IPv4 link-local
             // multicast address 224.0.0.251 or its IPv6 equivalent FF02::FB, except
@@ -160,25 +29,158 @@ class Responder: UDPChannelDelegate {
             //    * by virtue of being a direct unicast query.
             //
             /// @todo: implement this logic
-            do {
-                if source.port == 5353 {
-                    try channel.multicast(response.serialize())
-                } else {
-                    // In this case, the Multicast DNS responder MUST send a UDP response
-                    // directly back to the querier, via unicast, to the query packet's
-                    // source IP address and port.  This unicast response MUST be a
-                    // conventional unicast response as would be generated by a conventional
-                    // Unicast DNS server; for example, it MUST repeat the query ID and the
-                    // question given in the query message.  In addition, the cache-flush
-                    // bit described in Section 10.2, "Announcements to Flush Outdated Cache
-                    // Entries", MUST NOT be set in legacy unicast responses.
-                    response.id = message.id
-                    
-                    try channel.unicast(response.serialize(), to: source)
-                }
-            } catch {
-                NSLog("Error while replying to \(message) with response \(response): \(error)")
+            
+            let envelope: AddressedEnvelope<Message>
+            if source.port == 5353 {
+                envelope = AddressedEnvelope(remoteAddress: responder.ipv4Group, data: response)
+            } else {
+                // In this case, the Multicast DNS responder MUST send a UDP response
+                // directly back to the querier, via unicast, to the query packet's
+                // source IP address and port.  This unicast response MUST be a
+                // conventional unicast response as would be generated by a conventional
+                // Unicast DNS server; for example, it MUST repeat the query ID and the
+                // question given in the query message.  In addition, the cache-flush
+                // bit described in Section 10.2, "Announcements to Flush Outdated Cache
+                // Entries", MUST NOT be set in legacy unicast responses.
+                response.id = message.id
+                envelope = AddressedEnvelope(remoteAddress: source, data: response)
             }
+            _ = ctx.writeAndFlush(wrapOutboundOut(envelope))
+        }
+        
+        
+    }
+    
+    
+}
+
+final class MessageCodec: ChannelDuplexHandler {
+    typealias InboundIn = AddressedEnvelope<ByteBuffer>
+    typealias InboundOut = AddressedEnvelope<Message>
+    typealias OutboundIn = AddressedEnvelope<Message>
+    typealias OutboundOut = AddressedEnvelope<ByteBuffer>
+    
+    func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+        var incomingEnvelope = unwrapInboundIn(data)
+        guard let buf = incomingEnvelope.data.readBytes(length: incomingEnvelope.data.readableBytes) else {
+            return
+        }
+
+        let message: Message
+        do {
+            message = try Message(deserialize: Data(bytes: buf))
+        }
+        catch {
+            NSLog("Failed to deserialize message \(error)")
+            return
+        }
+        
+        let envelope = AddressedEnvelope(remoteAddress: incomingEnvelope.remoteAddress, data: message)
+        ctx.fireChannelRead(wrapInboundOut(envelope))
+    }
+    
+    func write(ctx: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        let outgoingEnvelope = unwrapOutboundIn(data)
+        let message = outgoingEnvelope.data
+        let buf: Data
+        do {
+            buf = try message.serialize()
+        }
+        catch {
+            NSLog("Failed to serialize outbound message \(error)")
+            return
+        }
+
+        var envelope = AddressedEnvelope(remoteAddress: outgoingEnvelope.remoteAddress, data: ctx.channel.allocator.buffer(capacity: buf.count))
+        envelope.data.write(bytes: buf)
+        ctx.write(wrapOutboundOut(envelope), promise: promise)
+    }
+    
+}
+
+class Responder {
+    enum Error: Swift.Error {
+        case channelSetupError(Swift.Error)
+        case missingResourceRecords
+    }
+    
+    let ipv4Group: SocketAddress
+    let ipv6Group: SocketAddress
+    
+    private static var _shared: Responder?
+    internal static func shared() throws -> Responder {
+        if let shared = _shared {
+            return shared
+        }
+        _shared = try Responder()
+        return _shared!
+    }
+
+    internal var listeners = [Listener]()
+    //let channels: [UDPChannel]
+    let channels: [Channel]
+    public private(set) var publishedServices: [NetService] = []
+    
+    // TODO: update host records on IP address changes
+    let hostname: String
+    let addresses: [SocketAddress]
+    let hostRecords: [ResourceRecord]
+    let host6Records: [ResourceRecord]
+    public let group: EventLoopGroup
+    
+    private init() throws {
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        
+        self.ipv4Group = try SocketAddress(ipAddress: "224.0.0.251", port: 5353)
+        self.ipv6Group = try SocketAddress(ipAddress: "FF02::FB", port: 5353)
+        
+        let hostname = try gethostname() + "."
+        precondition(hostname.hasSuffix(".local."), "host name \(hostname) should have suffix .local")
+        self.hostname = hostname
+        
+        addresses = try getLocalAddresses()
+
+        hostRecords = addresses.compactMap { (address) -> HostRecord<IPv4>? in
+            switch address {
+            case .v4(let sin):
+                return HostRecord<IPv4>(name: hostname, ttl: 120, ip: IPv4(address: sin.address.sin_addr))
+            default:
+                return nil
+            }
+        }
+        host6Records = addresses.compactMap { (address) -> HostRecord<IPv6>? in
+            switch address {
+            case .v6(let sin6):
+                return HostRecord<IPv6>(name: hostname, ttl: 120, ip: IPv6(address: sin6.address.sin6_addr))
+            default:
+                return nil
+            }
+        }
+        
+        let bootstrap = DatagramBootstrap(group: group)
+            .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .channelInitializer { $0.pipeline.addHandlers(
+                MessageCodec(),
+                MessageHandler(),
+                first: false) }
+        do {
+            channels = [
+                try bootstrap.bind(host: "127.0.0.1", port: 0).wait()
+            ]
+        } catch {
+            throw Error.channelSetupError(error)
+        }
+        //channels.forEach { $0.delegate = self }
+    }
+    
+    func handleRequest(message: Message) -> Message? {
+        if message.type == .response {
+            for listener in listeners {
+                listener.received(message: message)
+            }
+            return nil
+        } else {
+            return processQuery(message: message)
         }
     }
     
@@ -216,7 +218,77 @@ class Responder: UDPChannelDelegate {
 
     func multicast(message: Message) throws {
         for channel in channels {
-            try channel.multicast(message.serialize())
+            let envelope = AddressedEnvelope(remoteAddress: ipv4Group, data: try message.serialize())
+            _ = channel.pipeline.write(NIOAny(envelope)).mapIfError {
+                NSLog("Failed to multicast request on channel \(channel): \($0)")
+            }
+        }
+    }
+    
+    private func processQuery(message: Message) -> Message? {
+        precondition(message.type == .query, "Should process queries only")
+        var answers = [ResourceRecord]()
+        var additional = [ResourceRecord]()
+        
+        for question in message.questions {
+            switch question.type {
+            case .pointer:
+                for service in publishedServices {
+                    if let pointerRecord = service.pointerRecord,
+                        let serviceRecord = service.serviceRecord,
+                        pointerRecord.name == question.name
+                    {
+                        answers.append(pointerRecord)
+                        additional.append(serviceRecord)
+                        additional += hostRecords
+                        additional += host6Records
+                        if let textRecord = service.textRecord {
+                            additional.append(textRecord)
+                        }
+                    }
+                }
+            case .service:
+                for service in publishedServices {
+                    if let serviceRecord = service.serviceRecord, serviceRecord.name == question.name {
+                        answers.append(serviceRecord)
+                        additional += hostRecords
+                        additional += host6Records
+                    }
+                }
+            case .host where question.name == hostname:
+                answers += hostRecords
+                additional += host6Records
+            case .host6 where question.name == hostname:
+                answers += host6Records
+                additional += hostRecords
+            case .text:
+                for service in publishedServices {
+                    if let textRecord = service.textRecord, textRecord.name == question.name {
+                        answers.append(textRecord)
+                    }
+                }
+            default:
+                break
+            }
+        }
+        
+        guard answers.count > 0 else {
+            return nil
+        }
+        
+        var response = Message(type: .response)
+        response.questions = message.questions
+        response.answers = answers
+        response.additional = additional
+        return response
+    }
+    
+    deinit {
+        do {
+            try group.syncShutdownGracefully()
+        }
+        catch {
+            NSLog("Error shutting down DNS responder eventloop: \(error)")
         }
     }
 }
