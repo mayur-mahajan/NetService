@@ -1,6 +1,6 @@
 import Foundation
 
-#if os(macOS)
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
     import Darwin
 #else
     import Glibc

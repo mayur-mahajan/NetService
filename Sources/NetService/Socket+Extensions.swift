@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
     import Darwin
 #else
     import Glibc
@@ -126,12 +126,14 @@ extension Socket.Address: CustomStringConvertible {
         var buffer = Data(count: Int(INET6_ADDRSTRLEN))
         switch self {
         case .ipv4(var sin):
-            let ptr = buffer.withUnsafeMutableBytes {
+            var buf = buffer
+            let ptr = buf.withUnsafeMutableBytes {
                 inet_ntop(AF_INET, &sin.sin_addr, $0, socklen_t(buffer.count))
             }
             return String(cString: ptr!)
         case .ipv6(var sin6):
-            let ptr = buffer.withUnsafeMutableBytes {
+            var buf = buffer
+            let ptr = buf.withUnsafeMutableBytes {
                 inet_ntop(AF_INET6, &sin6.sin6_addr, $0, socklen_t(buffer.count))
             }
             return String(cString: ptr!)

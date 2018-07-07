@@ -1,6 +1,6 @@
 import Foundation
 
-#if os(macOS)
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
     // needed on OS X 10.11 El Capitan
     @objc
     class TimerTarget: NSObject {
@@ -53,8 +53,8 @@ import Foundation
             self.rawValue = rawValue
         }
 
-        static let defaultMode = CFRunLoopMode(kCFRunLoopDefaultMode)
-        static let commonModes = CFRunLoopMode(kCFRunLoopCommonModes)
+        static let defaultMode = kCFRunLoopDefaultMode
+        static let commonModes = kCFRunLoopCommonModes
     }
 
     func CFRunLoopAddSource(_ rl: CFRunLoop, _ source: CFRunLoopSource, _ mode: CFRunLoopMode) {
