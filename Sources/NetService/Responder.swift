@@ -218,7 +218,7 @@ class Responder {
 
     func multicast(message: Message) throws {
         for channel in channels {
-            let envelope = AddressedEnvelope(remoteAddress: ipv4Group, data: try message.serialize())
+            let envelope = AddressedEnvelope(remoteAddress: ipv4Group, data: message)
             _ = channel.pipeline.write(NIOAny(envelope)).mapIfError {
                 NSLog("Failed to multicast request on channel \(channel): \($0)")
             }
