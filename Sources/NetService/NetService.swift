@@ -10,7 +10,7 @@ import DNS
 import Socket
 import NIO
 
-let duplicateNameCheckTimeInterval = TimeInterval(3)
+let duplicateNameCheckTimeInterval = TimeAmount.seconds(3)
 
 // TODO: check name availability before claiming the service's name
 
@@ -159,7 +159,7 @@ public class NetService: Listener {
 
     enum PublishState: Equatable {
         case stopped
-        case lookingForDuplicates(Int, Timer)
+        case lookingForDuplicates(Int, Scheduled<()>)
         case published
         case didNotPublish(Error)
 
@@ -207,8 +207,9 @@ public class NetService: Listener {
             }
             // TODO: remove listener
 
-            let timer = Timer._scheduledTimer(withTimeInterval: duplicateNameCheckTimeInterval, repeats: false, block: {_ in self.publishPhaseTwo()})
-            publishState = .lookingForDuplicates(1, timer)
+            let scheduled = responder?.group.next().scheduleTask(in: TimeAmount.seconds(3), { _ = self.publishPhaseTwo()})
+            //let timer = Timer._scheduledTimer(withTimeInterval: duplicateNameCheckTimeInterval, repeats: false, block: {_ in self.publishPhaseTwo()})
+            publishState = .lookingForDuplicates(1, scheduled!)
         }
 
 //        if options.contains(.listenForConnections) {
@@ -282,18 +283,19 @@ public class NetService: Listener {
     }
 
     func publishError(_ error: Error) {
-        if case .lookingForDuplicates(let (_, timer)) = publishState {
-            timer.invalidate()
+        if case .lookingForDuplicates(let (_, scheduled)) = publishState {
+            scheduled.cancel()
+//            timer.invalidate()
         }
         publishState = .didNotPublish(error)
         delegate?.netService(self, didNotPublish: error)
     }
 
     func received(message: Message) {
-        guard case .lookingForDuplicates(let (number, timer)) = publishState else { return }
+        guard case .lookingForDuplicates(let (number, scheduled)) = publishState else { return }
 
         if message.answers.compactMap({ $0 as? ServiceRecord }).contains(where: { $0.name == fqdn }) {
-            timer.invalidate()
+            scheduled.cancel()
 
             fqdn = "\(name) (\(number + 1)).\(type)\(domain)"
             do {
@@ -303,11 +305,15 @@ public class NetService: Listener {
             } catch {
                 return publishError(error)
             }
-            let timer = Timer._scheduledTimer(withTimeInterval: duplicateNameCheckTimeInterval, repeats: false, block: {_ in
+            let scheduled = responder?.group.next().scheduleTask(in: duplicateNameCheckTimeInterval, {
                 self.name = "\(self.name) (\(number + 1))"
                 self.publishPhaseTwo()
             })
-            publishState = .lookingForDuplicates(number + 1, timer)
+//            let timer = Timer._scheduledTimer(withTimeInterval: duplicateNameCheckTimeInterval, repeats: false, block: {_ in
+//                self.name = "\(self.name) (\(number + 1))"
+//                self.publishPhaseTwo()
+//            })
+            publishState = .lookingForDuplicates(number + 1, scheduled!)
         }
     }
 
@@ -343,8 +349,8 @@ public class NetService: Listener {
         switch publishState {
         case .stopped:
             break
-        case .lookingForDuplicates(let (_, timer)):
-            timer.invalidate()
+        case .lookingForDuplicates(let (_, scheduled)):
+            scheduled.cancel()
         case .published:
             try! responder!.unpublish(self)
         case .didNotPublish:

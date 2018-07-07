@@ -14,5 +14,6 @@ let package = Package(
     targets: [
 		.target(name: "Cifaddrs", dependencies: []),
         .target(name: "NetService", dependencies: ["Cifaddrs", "NIO", "Socket", "DNS"]),
+        .testTarget(name: "NetServiceTests", dependencies: ["NetService"])
     ]
 )
