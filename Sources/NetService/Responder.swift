@@ -17,6 +17,8 @@ final class MessageHandler: ChannelInboundHandler {
             return
         }
         
+        NSLog("MessageHandler received \(message) from \(source)")
+        
         if var response = responder.handleRequest(message: message) {
             // The destination UDP port in all Multicast DNS responses MUST be 5353,
             // and the destination address MUST be the mDNS IPv4 link-local
@@ -61,6 +63,7 @@ final class MessageCodec: ChannelDuplexHandler {
     typealias OutboundOut = AddressedEnvelope<ByteBuffer>
     
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+        NSLog("MessageCodec: channel read triggered")
         var incomingEnvelope = unwrapInboundIn(data)
         guard let buf = incomingEnvelope.data.readBytes(length: incomingEnvelope.data.readableBytes) else {
             return
@@ -90,6 +93,8 @@ final class MessageCodec: ChannelDuplexHandler {
             NSLog("Failed to serialize outbound message \(error)")
             return
         }
+        
+        NSLog("MessageCodec: write triggered for \(message) to address \(outgoingEnvelope.remoteAddress)")
 
         var envelope = AddressedEnvelope(remoteAddress: outgoingEnvelope.remoteAddress, data: ctx.channel.allocator.buffer(capacity: buf.count))
         envelope.data.write(bytes: buf)
@@ -159,6 +164,7 @@ class Responder {
         
         let bootstrap = DatagramBootstrap(group: group)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .channelOption(ChannelOptions.multicastMembership(IP_ADD_MEMBERSHIP), value: NIO.Membership(address: ipv4Group)!)
             .channelInitializer { $0.pipeline.addHandlers(
                 MessageCodec(),
                 MessageHandler(),
