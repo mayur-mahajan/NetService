@@ -17,8 +17,6 @@ final class MessageHandler: ChannelInboundHandler {
             return
         }
         
-        NSLog("MessageHandler received \(message) from \(source)")
-        
         if var response = responder.handleRequest(message: message) {
             // The destination UDP port in all Multicast DNS responses MUST be 5353,
             // and the destination address MUST be the mDNS IPv4 link-local
@@ -63,7 +61,6 @@ final class MessageCodec: ChannelDuplexHandler {
     typealias OutboundOut = AddressedEnvelope<ByteBuffer>
     
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
-        NSLog("MessageCodec: channel read triggered")
         var incomingEnvelope = unwrapInboundIn(data)
         guard let buf = incomingEnvelope.data.readBytes(length: incomingEnvelope.data.readableBytes) else {
             return
@@ -94,8 +91,6 @@ final class MessageCodec: ChannelDuplexHandler {
             return
         }
         
-        NSLog("MessageCodec: write triggered for \(message) to address \(outgoingEnvelope.remoteAddress)")
-
         var envelope = AddressedEnvelope(remoteAddress: outgoingEnvelope.remoteAddress, data: ctx.channel.allocator.buffer(capacity: buf.count))
         envelope.data.write(bytes: buf)
         ctx.write(wrapOutboundOut(envelope), promise: promise)
@@ -162,21 +157,22 @@ class Responder {
             }
         }
         
+        var sa = sockaddr_in()
+        sa.sin_family = sa_family_t(AF_INET)
+        sa.sin_addr.s_addr = UInt32(bigEndian: INADDR_ANY)
+        sa.sin_port = ipv4Group.port!.bigEndian
+        let sockAddress = SocketAddress(sa, host: "")
         let bootstrap = DatagramBootstrap(group: group)
-            .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEPORT), value: 1)
             .channelOption(ChannelOptions.multicastMembership(IP_ADD_MEMBERSHIP), value: NIO.Membership(address: ipv4Group)!)
             .channelInitializer { $0.pipeline.addHandlers(
                 MessageCodec(),
                 MessageHandler(),
                 first: false) }
-        do {
-            channels = [
-                try bootstrap.bind(host: "127.0.0.1", port: 0).wait()
-            ]
-        } catch {
-            throw Error.channelSetupError(error)
-        }
-        //channels.forEach { $0.delegate = self }
+        channels = [
+            try bootstrap.bind(to: sockAddress).wait()
+        ]
+        print("UDP bind channel \(channels[0]) at \(String(describing: channels[0].localAddress))")
     }
     
     func handleRequest(message: Message) -> Message? {
@@ -225,7 +221,7 @@ class Responder {
     func multicast(message: Message) throws {
         for channel in channels {
             let envelope = AddressedEnvelope(remoteAddress: ipv4Group, data: message)
-            _ = channel.pipeline.write(NIOAny(envelope)).mapIfError {
+            _ = channel.pipeline.writeAndFlush(NIOAny(envelope)).mapIfError {
                 NSLog("Failed to multicast request on channel \(channel): \($0)")
             }
         }
