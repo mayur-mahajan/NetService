@@ -163,6 +163,7 @@ class Responder {
         sa.sin_port = ipv4Group.port!.bigEndian
         let sockAddress = SocketAddress(sa, host: "")
         let bootstrap = DatagramBootstrap(group: group)
+            .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEPORT), value: 1)
             .channelOption(ChannelOptions.multicastMembership(IP_ADD_MEMBERSHIP), value: NIO.Membership(address: ipv4Group)!)
             .channelInitializer { $0.pipeline.addHandlers(
