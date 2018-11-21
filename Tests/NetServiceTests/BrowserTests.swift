@@ -43,7 +43,7 @@ class BrowserTests: XCTestCase {
     }
     
     func testPublish() {
-        let service = NetService(domain: "local.", type: "_http._tcp.", name: "publishTest", port: 9876)
+        let service = NetService(domain: "local.", type: "_karbon._tcp.", name: "publishTest", port: 9876)
         print("Publishing service...")
         let delegate = MyServiceDelegate()
         service.delegate = delegate
