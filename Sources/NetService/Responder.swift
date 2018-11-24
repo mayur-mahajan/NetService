@@ -1,6 +1,5 @@
 import Foundation
 import DNS
-import Socket
 import NIO
 
 final class MessageHandler: ChannelInboundHandler {
@@ -87,7 +86,8 @@ final class MessageCodec: ChannelDuplexHandler {
             buf = try message.serialize()
         }
         catch {
-            NSLog("Failed to serialize outbound message \(error)")
+            NSLog("Failed to serialize outbound message: \(error)")
+            promise?.fail(error: error)
             return
         }
         

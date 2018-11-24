@@ -8,13 +8,11 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/Bouke/DNS.git", .revision("2d13515ea1f697170c9c32f7708ac508e749bf50")),
-//        .package(url: "https://github.com/apple/swift-nio.git", from: "1.0.0"),
-        .package(url: "https://github.com/mayur-mahajan/swift-nio.git", .revision("26324082af963922fda832c626287a81d532f8d4")),
-        .package(url: "https://github.com/IBM-Swift/BlueSocket.git", from: "1.0.0")
+        .package(url: "https://github.com/mayur-mahajan/swift-nio.git", .revision("26324082af963922fda832c626287a81d532f8d4"))
     ],
     targets: [
 		.target(name: "Cifaddrs", dependencies: []),
-        .target(name: "NetService", dependencies: ["Cifaddrs", "NIO", "Socket", "DNS"]),
+        .target(name: "NetService", dependencies: ["Cifaddrs", "NIO", "DNS"]),
         .testTarget(name: "NetServiceTests", dependencies: ["NetService"])
     ]
 )

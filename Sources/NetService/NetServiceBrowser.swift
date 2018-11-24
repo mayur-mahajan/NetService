@@ -2,7 +2,6 @@
 
 import Foundation
 import DNS
-import Socket
 import NIO
 // TODO: track TTL of records
 

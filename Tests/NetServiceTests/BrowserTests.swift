@@ -2,7 +2,6 @@
 import class XCTest.XCTestCase
 
 import Darwin
-import Socket
 
 class MyServiceDelegate: NetServiceDelegate {
     func netServiceWillPublish(_ sender: NetService) {
@@ -19,13 +18,6 @@ class MyServiceDelegate: NetServiceDelegate {
 
     func netServiceDidStop(_ sender: NetService) {
         print("Did stop: \(sender)")
-    }
-
-    func netService(_ sender: NetService, didAcceptConnectionWith socket: Socket) {
-        print("Did accept connection: \(sender), from: \(socket.remoteHostname)")
-        print(try! socket.readString() ?? "")
-        try! socket.write(from: "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!")
-        socket.close()
     }
 }
 
@@ -44,12 +36,16 @@ class BrowserTests: XCTestCase {
     
     func testPublish() {
         let service = NetService(domain: "local.", type: "_karbon._tcp.", name: "publishTest", port: 9876)
+        _ = service.setTXTRecord(["id":"6789"])
         print("Publishing service...")
         let delegate = MyServiceDelegate()
         service.delegate = delegate
         service.publish()
         
-        sleep(1000)
+        for i in 1..<60 {
+            print("Sleep 10. iteration \(i)")
+            sleep(1)
+        }
         print("Stopping service...")
         service.stop()
     }

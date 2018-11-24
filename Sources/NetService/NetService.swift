@@ -7,7 +7,6 @@
 import Foundation
 import Cifaddrs
 import DNS
-import Socket
 import NIO
 
 let duplicateNameCheckTimeInterval = TimeAmount.seconds(3)
@@ -147,9 +146,9 @@ public class NetService: Listener {
     public weak var delegate: NetServiceDelegate?
 
     // MARK: Using Network Services
-    var listenQueue: DispatchQueue?
-    var socket4: Socket?
-    var socket6: Socket?
+//    var listenQueue: DispatchQueue?
+//    var socket4: Socket?
+//    var socket6: Socket?
 
     var responder: Responder?
     var pointerRecord: PointerRecord?
@@ -212,46 +211,6 @@ public class NetService: Listener {
             publishState = .lookingForDuplicates(1, scheduled!)
         }
 
-//        if options.contains(.listenForConnections) {
-//            precondition(type.hasSuffix("._tcp."), "only listening on TCP is supported")
-//
-//            listenQueue = DispatchQueue.global(qos: .userInteractive)
-//
-//            do {
-//                socket4 = try Socket.create(family: .inet, type: .stream, proto: .tcp)
-//                try socket4!.listen(on: self.port)
-//                self.port = Int(socket4!.signature!.port)
-//
-//                socket6 = try Socket.create(family: .inet6, type: .stream, proto: .tcp)
-//                try socket6!.listen(on: self.port)
-//            } catch {
-//                publishError(error)
-//            }
-//
-//            listenQueue!.async { [unowned self] in
-//                while true {
-//                    do {
-//                        let responderSocket = try self.socket4!.acceptClientConnection()
-//                        self.delegate?.netService(self, didAcceptConnectionWith: responderSocket)
-//                    } catch {
-//                        self.publishError(error)
-//                        break
-//                    }
-//                }
-//            }
-//            listenQueue!.async { [unowned self] in
-//                while true {
-//                    do {
-//                        let responderSocket = try self.socket6!.acceptClientConnection()
-//                        self.delegate?.netService(self, didAcceptConnectionWith: responderSocket)
-//                    } catch {
-//                        self.publishError(error)
-//                        break
-//                    }
-//                }
-//            }
-//        }
-
         if options.contains(.noAutoRename) {
             publishPhaseTwo()
         }
@@ -285,7 +244,6 @@ public class NetService: Listener {
     func publishError(_ error: Error) {
         if case .lookingForDuplicates(let (_, scheduled)) = publishState {
             scheduled.cancel()
-//            timer.invalidate()
         }
         publishState = .didNotPublish(error)
         delegate?.netService(self, didNotPublish: error)
@@ -309,10 +267,6 @@ public class NetService: Listener {
                 self.name = "\(self.name) (\(number + 1))"
                 self.publishPhaseTwo()
             })
-//            let timer = Timer._scheduledTimer(withTimeInterval: duplicateNameCheckTimeInterval, repeats: false, block: {_ in
-//                self.name = "\(self.name) (\(number + 1))"
-//                self.publishPhaseTwo()
-//            })
             publishState = .lookingForDuplicates(number + 1, scheduled!)
         }
     }
@@ -452,6 +406,6 @@ public protocol NetServiceDelegate: class {
     /// - Parameters:
     ///   - sender: The net service object that the client connected to.
     ///   - socket: A `Socket` object for sending and receiving data to and from the client.
-    func netService(_ sender: NetService,
-                    didAcceptConnectionWith socket: Socket)
+//    func netService(_ sender: NetService,
+//                    didAcceptConnectionWith socket: Socket)
 }

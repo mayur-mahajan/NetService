@@ -6,7 +6,6 @@
 
 import struct Foundation.Data
 import Cifaddrs
-import Socket
 import NIO
 
 struct POSIXError: Error {
@@ -185,12 +184,6 @@ func getLocalAddresses() throws -> [SocketAddress] {
     return getifaddrs()
         .filter { Int($0.pointee.ifa_flags) & Int(IFF_LOOPBACK) == 0 }
         .compactMap { SocketAddress($0.pointee.ifa_addr, hostname) }
-}
-
-func getLocalAddresses() -> [Socket.Address] {
-    return getifaddrs()
-        .filter { Int($0.pointee.ifa_flags) & Int(IFF_LOOPBACK) == 0 }
-        .compactMap { Socket.Address($0.pointee.ifa_addr) }
 }
 
 extension SocketAddress {
